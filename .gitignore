@@ -1,0 +1,38 @@
+# Ignore Composer's vendor directory
+/vendor
+
+# Ignore Composer lock file (optional for libraries)
+composer.lock
+
+# Node modules if you use frontend assets
+/node_modules
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE/Editor settings
+.idea
+.vscode
+*.sublime-project
+*.sublime-workspace
+
+# Log files
+*.log
+
+# PHPUnit
+.phpunit.result.cache
+
+# Coverage results
+coverage/
+clover.xml
+phpunit.xml
+
+# Backup or temporary files
+*.bak
+*.tmp
+*.swp
+
+# Environment files
+.env
+.e

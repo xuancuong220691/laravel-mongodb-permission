@@ -1,0 +1,32 @@
+{
+  "name": "cuongnx/laravel-mongodb-permission",
+  "description": "Role and permission system for Laravel using MongoDB.",
+  "type": "library",
+  "license": "MIT",
+  "version": "1.0.0",
+  "authors": [
+    {
+      "name": "Cuong Nguyen",
+      "email": "xuancuong220691@gmail.com"
+    }
+  ],
+  "require": {
+    "php": "^8.1",
+    "laravel/framework": "^11.0",
+    "mongodb/laravel-mongodb": "^5.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "CuongNX\\MongoPermission\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "CuongNX\\MongoPermission\\Providers\\MongoPermissionServiceProvider"
+      ]
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
