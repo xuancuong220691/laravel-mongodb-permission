@@ -1,6 +1,8 @@
-# MongoPermission – Role & Permission for MongoDB in Laravel
+# MongoPermission – Role & Permission for MongoDB in Laravel 11+
 
-![Laravel](https://img.shields.io/badge/Laravel-10.x-orange)
+> ✅ Supports Laravel 11 and 12+ with full MongoDB role/permission management.
+
+![Laravel](https://img.shields.io/badge/Laravel-11%20%7C%2012-orange)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Compatible-green)
 ![License](https://img.shields.io/github/license/xuancuong220691/laravel-mongodb-permission)
 
@@ -12,8 +14,8 @@ MongoPermission is a library that extends Spatie's **Role & Permission** system 
 
 | Item                          | Requirement                                                                    |
 | ----------------------------- | ------------------------------------------------------------------------------ |
-| **Library Version**           | `v1.0.0` *(or your actual tag)*                                                |
-| **Supported Laravel Version** | `^10.0`                                                                        |
+| **Library Version**           | `v1.0.0`                    *                                                |
+| **Supported Laravel Version** | `^11.0`                                                                        |
 | **MongoDB Laravel Driver**    | [`mongodb/laravel-mongodb`](https://github.com/mongodb/laravel-mongodb) `^3.9` |
 | **MongoDB PHP Extension**     | `mongodb` PHP extension `>=1.13`                                               |
 | **MongoDB Server**            | `>=4.0`                                                                        |
