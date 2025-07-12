@@ -1,6 +1,6 @@
 {
   "name": "cuongnx/laravel-mongodb-permission",
-  "description": "Role and permission system for Laravel using MongoDB.",
+  "description": "A flexible and multi-guard Role & Permission system for Laravel 11+, using MongoDB and inspired by Spatie.",
   "type": "library",
   "license": "MIT",
   "version": "1.0.0",
