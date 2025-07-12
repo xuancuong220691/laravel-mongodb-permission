@@ -3,7 +3,6 @@
   "description": "A flexible and multi-guard Role & Permission system for Laravel 11+ and 12+, using MongoDB and inspired by Spatie.",
   "type": "library",
   "license": "MIT",
-  "version": "1.0.0",
   "authors": [
     {
       "name": "Cuong Nguyen",
