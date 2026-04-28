@@ -1,6 +1,6 @@
 <?php
 
-namespace CuongNX\MongoPermission\Services\Contracts;
+namespace CuongNX\LaravelMongoPermission\Services\Contracts;
 
 interface PermissionServiceInterface
 {
@@ -17,7 +17,7 @@ interface PermissionServiceInterface
 
     public function reset(): void;
 
-    public function exportToFile(string $path): void;
+    public function exportToFile(string $path, ?string $guard = null): void;
     public function importFromFile(string $path, string $guard): array;
 
     public function syncRolePermissions(string $role, string $jsonPath, string $guard): array;

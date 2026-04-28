@@ -1,6 +1,6 @@
 <?php
 
-namespace CuongNX\MongoPermission\Models;
+namespace CuongNX\LaravelMongoPermission\Models;
 
 use MongoDB\Laravel\Eloquent\Model;
 
@@ -11,6 +11,6 @@ class Role extends Model
     protected $fillable = ['name', 'guard_name', 'permissions'];
 
     protected $casts = [
-        'permissions' => 'array', // Mảng tên hoặc ID quyền
+        'permissions' => 'array',
     ];
 }

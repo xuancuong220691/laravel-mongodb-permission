@@ -1,6 +1,6 @@
 <?php
 
-namespace CuongNX\MongoPermission\Models;
+namespace CuongNX\LaravelMongoPermission\Models;
 
 use MongoDB\Laravel\Eloquent\Model;
 

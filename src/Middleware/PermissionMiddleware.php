@@ -1,6 +1,6 @@
 <?php
 
-namespace CuongNX\MongoPermission\Middleware;
+namespace CuongNX\LaravelMongoPermission\Middleware;
 
 use Closure;
 use Illuminate\Support\Facades\Auth;
