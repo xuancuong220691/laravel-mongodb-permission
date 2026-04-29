@@ -13,7 +13,7 @@ class RoleMiddleware
         $user = Auth::guard($guard)->user();
 
         if (!$user) {
-            abort(403, 'Unauthorized. No user found in guard [' . $guard . ']');
+            abort(403);
         }
 
         $roleList = explode('|', $roles);
@@ -24,6 +24,6 @@ class RoleMiddleware
             }
         }
 
-        abort(403, 'Unauthorized. Required role: ' . $roles);
+        abort(403);
     }
 }

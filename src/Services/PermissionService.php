@@ -81,11 +81,19 @@ class PermissionService implements PermissionServiceInterface
         if (!$role) return ['failed' => ["Role [$roleName] không tồn tại"]];
 
         $items = $this->parseList($permissions);
+
+        // Fix #3: load tất cả permissions cần thiết trong 1 query thay vì N queries
+        $existingNames = Permission::where('guard_name', $guard)
+            ->whereIn('name', $items)
+            ->pluck('name')
+            ->flip() // ['name' => index] để O(1) lookup
+            ->toArray();
+
         $assigned = $skipped = [];
         $perms = $role->permissions ?? [];
 
         foreach ($items as $permName) {
-            if (!Permission::where('name', $permName)->where('guard_name', $guard)->exists()) {
+            if (!isset($existingNames[$permName])) {
                 $skipped[] = $permName;
                 continue;
             }
@@ -98,11 +106,35 @@ class PermissionService implements PermissionServiceInterface
             }
         }
 
-        // Lưu 1 lần sau vòng lặp
         $role->permissions = $perms;
         $role->save();
 
         return compact('assigned', 'skipped');
+    }
+
+    // Fix #7: xóa bớt một số permissions khỏi role (không sync toàn bộ)
+    public function revokePermissions(string $roleName, string $permissions, string $guard): array
+    {
+        $role = Role::where('name', $roleName)->where('guard_name', $guard)->first();
+        if (!$role) return ['failed' => ["Role [$roleName] không tồn tại"]];
+
+        $items = $this->parseList($permissions);
+        $revoked = $skipped = [];
+        $perms = $role->permissions ?? [];
+
+        foreach ($items as $permName) {
+            if (in_array($permName, $perms)) {
+                $perms = array_values(array_filter($perms, fn($p) => $p !== $permName));
+                $revoked[] = $permName;
+            } else {
+                $skipped[] = $permName;
+            }
+        }
+
+        $role->permissions = $perms;
+        $role->save();
+
+        return compact('revoked', 'skipped');
     }
 
     public function listRoles(string $guard): array
@@ -119,11 +151,17 @@ class PermissionService implements PermissionServiceInterface
             ->toArray();
     }
 
-    public function reset(): void
+    // Fix #4: thêm tham số guard tùy chọn, tránh xóa nhầm guard khác
+    public function reset(?string $guard = null): void
     {
-        // truncate() không fire model events → dùng khi muốn xóa nhanh toàn bộ
-        Role::truncate();
-        Permission::truncate();
+        if ($guard) {
+            Role::where('guard_name', $guard)->each(fn($r) => $r->delete());
+            Permission::where('guard_name', $guard)->each(fn($p) => $p->delete());
+        } else {
+            // Truncate xóa toàn bộ mọi guard, không fire model events
+            Role::truncate();
+            Permission::truncate();
+        }
     }
 
     /**
@@ -152,10 +190,23 @@ class PermissionService implements PermissionServiceInterface
     /**
      * Nhập roles & permissions từ file JSON.
      * Tự động validate permissions trước khi gán vào role.
+     *
+     * @return array{created: string[], skipped: string[]}
+     * @throws \InvalidArgumentException nếu file không tồn tại hoặc JSON không hợp lệ
      */
     public function importFromFile(string $path, string $guard): array
     {
+        // Fix #2: validate file tồn tại và JSON hợp lệ
+        if (!File::exists($path)) {
+            throw new \InvalidArgumentException("File không tồn tại: $path");
+        }
+
         $json = json_decode(File::get($path), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \InvalidArgumentException("JSON không hợp lệ: " . json_last_error_msg());
+        }
+
         $result = ['created' => [], 'skipped' => []];
 
         // 1. Import permissions trước (phải tồn tại trước khi gán cho role)
@@ -202,10 +253,19 @@ class PermissionService implements PermissionServiceInterface
         $role = Role::where('name', $roleName)->where('guard_name', $guard)->first();
         if (!$role) return ['failed' => ["Role [$roleName] không tồn tại"]];
 
+        // Fix #2: validate JSON trong syncRolePermissions
+        if (!File::exists($jsonPath)) {
+            throw new \InvalidArgumentException("File không tồn tại: $jsonPath");
+        }
+
         $json = json_decode(File::get($jsonPath), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \InvalidArgumentException("JSON không hợp lệ: " . json_last_error_msg());
+        }
+
         $requestedPerms = $json['permissions'] ?? [];
 
-        // Chỉ gán permissions thực sự tồn tại trong DB
         $validPerms = Permission::where('guard_name', $guard)
             ->whereIn('name', $requestedPerms)
             ->pluck('name')

@@ -11,11 +11,13 @@ interface PermissionServiceInterface
     public function deletePermissions(string $permissions, string $guard): array;
 
     public function assignPermissions(string $role, string $permissions, string $guard): array;
+    public function revokePermissions(string $role, string $permissions, string $guard): array;
 
     public function listRoles(string $guard): array;
     public function listPermissions(string $guard): array;
 
-    public function reset(): void;
+    /** Xóa toàn bộ roles & permissions. Nếu có $guard chỉ xóa guard đó (fire model events). Không truyền $guard thì truncate toàn bộ. */
+    public function reset(?string $guard = null): void;
 
     public function exportToFile(string $path, ?string $guard = null): void;
     public function importFromFile(string $path, string $guard): array;

@@ -4,6 +4,7 @@ namespace CuongNX\LaravelMongoPermission\Traits;
 
 use CuongNX\LaravelMongoPermission\Models\Role;
 use CuongNX\LaravelMongoPermission\Models\Permission;
+use Illuminate\Support\Collection;
 use MongoDB\BSON\ObjectId;
 
 trait HasRoles
@@ -54,6 +55,12 @@ trait HasRoles
         $this->clearPermissionCache();
     }
 
+    /** Alias của removeRole() cho nhất quán với revokePermissionTo() */
+    public function revokeRole(string $roleName): void
+    {
+        $this->removeRole($roleName);
+    }
+
     public function removeRole(string $roleName): void
     {
         $role = Role::where('name', $roleName)
@@ -100,16 +107,16 @@ trait HasRoles
     {
         if (empty($this->role_ids) || empty($roleNames)) return false;
 
+        // Fix #8: dùng count() từ DB thay vì array_intersect trong PHP
         $found = Role::whereIn('_id', $this->toObjectIds($this->role_ids))
             ->where('guard_name', $this->getGuardName())
             ->whereIn('name', $roleNames)
-            ->pluck('name')
-            ->toArray();
+            ->count();
 
-        return count(array_intersect($roleNames, $found)) === count($roleNames);
+        return $found === count($roleNames);
     }
 
-    public function getRoleNames(): \Illuminate\Support\Collection
+    public function getRoleNames(): Collection
     {
         if (empty($this->role_ids)) {
             return collect();
@@ -121,7 +128,7 @@ trait HasRoles
     }
 
     // -------------------------------------------------------------------------
-    // Permissions
+    // Direct permissions
     // -------------------------------------------------------------------------
 
     public function givePermissionTo(string $permissionName): void
@@ -152,6 +159,18 @@ trait HasRoles
         $this->permission_ids = array_values(
             array_filter($this->permission_ids ?? [], fn($id) => $id !== (string) $permission->_id)
         );
+        $this->save();
+        $this->clearPermissionCache();
+    }
+
+    /** Fix #6: sync toàn bộ direct permissions (thay thế cũ bằng mới) */
+    public function syncPermissions(array $permissionNames): void
+    {
+        $permissions = Permission::whereIn('name', $permissionNames)
+            ->where('guard_name', $this->getGuardName())
+            ->get();
+
+        $this->permission_ids = $permissions->map(fn($p) => (string) $p->_id)->values()->toArray();
         $this->save();
         $this->clearPermissionCache();
     }
@@ -207,6 +226,7 @@ trait HasRoles
         return false;
     }
 
+    /** @return string[] Tất cả tên permissions (direct + via roles, unique) */
     public function getAllPermissions(): array
     {
         $direct = [];
@@ -240,9 +260,9 @@ trait HasRoles
         $result = [];
         foreach ($ids as $id) {
             try {
-                $result[] = new ObjectId($id);
+                $result[] = new ObjectId((string) $id);
             } catch (\Throwable) {
-                // Bỏ qua ID không hợp lệ
+                // ID không hợp lệ — bỏ qua để không crash query
             }
         }
         return $result;

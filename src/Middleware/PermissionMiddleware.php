@@ -13,7 +13,7 @@ class PermissionMiddleware
         $user = Auth::guard($guard)->user();
 
         if (!$user) {
-            abort(403, 'Unauthorized. No user found in guard [' . $guard . ']');
+            abort(403);
         }
 
         $permissionList = explode('|', $permissions);
@@ -24,6 +24,6 @@ class PermissionMiddleware
             }
         }
 
-        abort(403, 'Unauthorized. Required permission: ' . $permissions);
+        abort(403);
     }
 }

@@ -96,6 +96,7 @@ $admin->assignRole('moderator');
 
 // Gỡ role
 $admin->removeRole('moderator');
+$admin->revokeRole('moderator');  // alias của removeRole()
 
 // Thay toàn bộ roles (xóa cũ, set mới)
 $admin->syncRoles(['super-admin', 'moderator']);
@@ -109,14 +110,17 @@ $admin->hasAllRoles(['admin', 'editor']);  // bool — phải có đủ tất c�
 $admin->getRoleNames(); // Illuminate\Support\Collection
 ```
 
-### Permissions
+### Direct Permissions
 
 ```php
 // Cấp permission trực tiếp cho user
 $admin->givePermissionTo('edit-users');
 
-// Thu hồi
+// Thu hồi từng permission
 $admin->revokePermissionTo('edit-users');
+
+// Thay toàn bộ direct permissions (xóa cũ, set mới)
+$admin->syncPermissions(['edit-users', 'view-logs']);
 
 // Kiểm tra (direct permission HOẶC qua role — có cache)
 $admin->hasPermissionTo('edit-users');                    // bool
@@ -124,7 +128,7 @@ $admin->hasAnyPermission(['edit-users', 'delete-posts']); // bool — có ít nh
 $admin->hasAllPermissions(['edit-users', 'view-logs']);   // bool — phải có đủ tất cả
 
 // Lấy toàn bộ tên permissions (direct + via roles, unique)
-$admin->getAllPermissions(); // array
+$admin->getAllPermissions(); // string[]
 ```
 
 > **Cache:** Kết quả `hasRole` và `hasPermissionTo` được cache trong static array theo key `<model_id>:<type>:<name>` trong suốt vòng đời request. Cache tự xóa khi gọi bất kỳ method mutation nào.
@@ -233,11 +237,14 @@ php artisan mp:manage --delete-permission=edit-posts --guard=admin
 php artisan mp:manage --list-permissions --guard=admin
 ```
 
-### Gán permissions cho role
+### Gán / Gỡ permissions của role
 
 ```bash
-# Cú pháp: role:perm1,perm2,perm3
+# Thêm permissions vào role — cú pháp: role:perm1,perm2
 php artisan mp:manage --assign-permission=super-admin:manage-users,view-logs --guard=admin
+
+# Gỡ bớt permissions khỏi role (không ảnh hưởng permissions còn lại)
+php artisan mp:manage --revoke-permission=super-admin:view-logs --guard=admin
 ```
 
 ### Export / Import
@@ -287,8 +294,11 @@ File JSON chỉ cần có key `permissions`:
 ### Reset
 
 ```bash
-# Xóa toàn bộ roles và permissions (có confirm)
-php artisan mp:manage --reset
+# Xóa roles & permissions của guard hiện tại (fire model events → cascade cleanup)
+php artisan mp:manage --reset --guard=admin
+
+# Xóa toàn bộ mọi guard bằng truncate (nhanh, không fire events)
+php artisan mp:manage --reset-all
 ```
 
 ---
@@ -319,13 +329,14 @@ class RoleController extends Controller
 | `createPermissions(string $perms, string $guard)` | `array` | Tạo permissions |
 | `deletePermissions(string $perms, string $guard)` | `array` | Xóa permissions (cascade cleanup) |
 | `assignPermissions(string $role, string $perms, string $guard)` | `array` | Gán permissions vào role |
+| `revokePermissions(string $role, string $perms, string $guard)` | `array` | Gỡ bớt permissions khỏi role |
 | `listRoles(string $guard)` | `array` | Danh sách roles |
 | `listPermissions(string $guard)` | `array` | Danh sách permissions |
 | `showRole(string $name, string $guard)` | `array` | Chi tiết 1 role |
 | `exportToFile(string $path, ?string $guard)` | `void` | Xuất JSON |
 | `importFromFile(string $path, string $guard)` | `array` | Nhập JSON |
 | `syncRolePermissions(string $role, string $jsonPath, string $guard)` | `array` | Sync permissions từ file |
-| `reset()` | `void` | Xóa toàn bộ (truncate, không fire events) |
+| `reset(?string $guard)` | `void` | Xóa theo guard (fire events) hoặc truncate toàn bộ nếu không truyền guard |
 
 Kết quả trả về `array` có các key: `created`, `skipped`, `deleted`, `synced`, `failed`.
 
@@ -340,7 +351,7 @@ Khi **xóa Permission**, thư viện tự động:
 - Xóa permission name khỏi `permissions[]` của tất cả Role documents
 - Xóa `permission_ids` tương ứng khỏi tất cả user documents
 
-> `reset()` dùng `truncate()` — nhanh hơn nhưng **không** fire model events, cascade cleanup sẽ không chạy.
+> `reset($guard)` xóa từng document và fire model events → cascade cleanup chạy bình thường. `reset()` không tham số dùng `truncate()` — nhanh hơn nhưng **không** fire events và xóa **toàn bộ mọi guard**.
 
 ---
 
