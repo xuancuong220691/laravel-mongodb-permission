@@ -1,10 +1,28 @@
 # laravel-mongodb-permission
 
+[![Packagist](https://img.shields.io/packagist/v/cuongnx/laravel-mongodb-permission)](https://packagist.org/packages/cuongnx/laravel-mongodb-permission)
 [![Laravel](https://img.shields.io/badge/Laravel-11%20%7C%2012-orange)](https://laravel.com)
 [![MongoDB](https://img.shields.io/badge/MongoDB-5.4+-green)](https://www.mongodb.com)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Role & Permission system cho Laravel + MongoDB. Hỗ trợ đa guard, không cần SQL, lưu trữ hoàn toàn trên MongoDB.
+Role & Permission system cho Laravel + MongoDB. Hỗ trợ đa guard, không cần SQL, lưu trữ hoàn toàn trên MongoDB. Tích hợp sẵn với **Filament v3/v4/v5** qua `MongoShieldPlugin`.
+
+---
+
+## Mục lục
+
+- [Yêu cầu](#yêu-cầu)
+- [Cài đặt](#cài-đặt)
+- [Cấu trúc dữ liệu MongoDB](#cấu-trúc-dữ-liệu-mongodb)
+- [Setup Model](#setup-model)
+- [HasRoles API](#hasroles-api)
+- [Middleware](#middleware)
+- [Blade Directives](#blade-directives)
+- [Artisan — mp:manage](#artisan--mpmanage)
+- [PermissionService (DI)](#permissionservice-dependency-injection)
+- [Cascade Cleanup](#cascade-cleanup)
+- [Shield — Filament Integration](#shield--filament-integration)
+- [License](#license)
 
 ---
 
@@ -15,6 +33,7 @@ Role & Permission system cho Laravel + MongoDB. Hỗ trợ đa guard, không c�
 | PHP | `^8.1` |
 | Laravel | `^11.0 \|\| ^12.0` |
 | mongodb/laravel-mongodb | `^5.4` |
+| filament/filament *(optional)* | `^3.0 \|\| ^4.0 \|\| ^5.0` |
 
 ---
 
@@ -36,7 +55,7 @@ php artisan vendor:publish --tag=mongo-permission
 
 ## Cấu hình
 
-`config/mongo-permission.php` — khai báo các Model sử dụng `HasRoles` để thư viện tự động cleanup khi xóa role/permission:
+`config/mongo-permission.php` — khai báo các Model sử dụng `HasRoles` để thư viện tự động cascade cleanup khi xóa role/permission:
 
 ```php
 return [
@@ -46,6 +65,25 @@ return [
     ],
 ];
 ```
+
+---
+
+## Cấu trúc dữ liệu MongoDB
+
+```
+Collection: roles
+{ _id, name: "moderator", guard_name: "admin", permissions: ["users.view", "users.update"] }
+
+Collection: permissions
+{ _id, name: "users.view", guard_name: "admin" }
+
+Collection: admins  (hoặc bất kỳ model nào dùng HasRoles)
+{ ..., role_ids: ["<ObjectId>"], permission_ids: [] }
+```
+
+- `role.permissions` — lưu tên permission dạng string array (không dùng ObjectId)
+- `admin.role_ids` — ObjectId string của các roles được gán
+- `admin.permission_ids` — ObjectId string của các direct permissions (hiếm dùng)
 
 ---
 
@@ -60,29 +98,16 @@ class Admin extends Authenticatable
 {
     use HasRoles;
 
-    protected $guard_name = 'admin'; // phải khai báo đúng guard
+    protected $guard_name = 'admin';
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->hasRole('super-admin');
+    }
 }
 ```
 
-> **Lưu ý:** `$guard_name` quyết định thư viện tìm role/permission theo guard nào. Nếu bỏ qua, mặc định dùng `config('auth.defaults.guard')`.
-
----
-
-## Cấu trúc dữ liệu MongoDB
-
-```
-Collection: roles
-{ _id, name: "super-admin", guard_name: "admin", permissions: ["manage-users", "view-logs"] }
-
-Collection: permissions
-{ _id, name: "manage-users", guard_name: "admin" }
-
-Collection: admins (hoặc bất kỳ model nào dùng HasRoles)
-{ ..., role_ids: ["<ObjectId>", ...], permission_ids: ["<ObjectId>", ...] }
-```
-
-- Role lưu danh sách permission **theo tên** (string array) — không dùng ObjectId
-- User lưu danh sách role/permission **theo ObjectId** (string)
+> `$guard_name` quyết định thư viện tìm role/permission theo guard nào. Nếu bỏ qua, mặc định dùng `config('auth.defaults.guard')`.
 
 ---
 
@@ -91,66 +116,50 @@ Collection: admins (hoặc bất kỳ model nào dùng HasRoles)
 ### Roles
 
 ```php
-// Gán role (bỏ qua nếu đã có)
-$admin->assignRole('moderator');
+$admin->assignRole('moderator');                   // gán (bỏ qua nếu đã có)
+$admin->removeRole('moderator');                   // gỡ
+$admin->revokeRole('moderator');                   // alias của removeRole()
+$admin->syncRoles(['moderator', 'editor']);         // thay toàn bộ
 
-// Gỡ role
-$admin->removeRole('moderator');
-$admin->revokeRole('moderator');  // alias của removeRole()
+$admin->hasRole('moderator');                      // bool — cache per-request
+$admin->hasAnyRole(['admin', 'editor']);            // bool — ít nhất 1
+$admin->hasAllRoles(['admin', 'editor']);           // bool — phải có đủ
 
-// Thay toàn bộ roles (xóa cũ, set mới)
-$admin->syncRoles(['super-admin', 'moderator']);
-
-// Kiểm tra
-$admin->hasRole('moderator');              // bool — có cache
-$admin->hasAnyRole(['admin', 'editor']);   // bool — có ít nhất 1
-$admin->hasAllRoles(['admin', 'editor']);  // bool — phải có đủ tất cả
-
-// Lấy danh sách tên
-$admin->getRoleNames(); // Illuminate\Support\Collection
+$admin->getRoleNames();                            // Collection<string>
 ```
 
-### Direct Permissions
+### Permissions
 
 ```php
-// Cấp permission trực tiếp cho user
-$admin->givePermissionTo('edit-users');
+$admin->givePermissionTo('users.create');          // direct permission
+$admin->revokePermissionTo('users.create');
+$admin->syncPermissions(['users.view', 'users.update']);
 
-// Thu hồi từng permission
-$admin->revokePermissionTo('edit-users');
+$admin->hasPermissionTo('users.view');             // bool — direct OR via role, cache per-request
+$admin->hasAnyPermission(['users.view', 'users.delete']);
+$admin->hasAllPermissions(['users.view', 'users.update']);
 
-// Thay toàn bộ direct permissions (xóa cũ, set mới)
-$admin->syncPermissions(['edit-users', 'view-logs']);
-
-// Kiểm tra (direct permission HOẶC qua role — có cache)
-$admin->hasPermissionTo('edit-users');                    // bool
-$admin->hasAnyPermission(['edit-users', 'delete-posts']); // bool — có ít nhất 1
-$admin->hasAllPermissions(['edit-users', 'view-logs']);   // bool — phải có đủ tất cả
-
-// Lấy toàn bộ tên permissions (direct + via roles, unique)
-$admin->getAllPermissions(); // string[]
+$admin->getAllPermissions();                        // string[] — direct + via roles, unique
 ```
 
-> **Cache:** Kết quả `hasRole` và `hasPermissionTo` được cache trong static array theo key `<model_id>:<type>:<name>` trong suốt vòng đời request. Cache tự xóa khi gọi bất kỳ method mutation nào.
+> **Cache:** Kết quả `hasRole`/`hasPermissionTo` được cache theo key `<model_id>:<type>:<name>` trong suốt vòng đời request. Tự xóa khi gọi bất kỳ method mutation nào.
 
 ---
 
 ## Middleware
 
-Middleware `role` và `permission` được đăng ký tự động:
-
 ```php
-// Kiểm tra role — dùng OR với dấu |
+// Kiểm tra role — OR bằng dấu |
 Route::middleware('role:super-admin')->...
 Route::middleware('role:super-admin|moderator')->...
 
 // Kiểm tra permission
-Route::middleware('permission:edit-users')->...
-Route::middleware('permission:edit-users|delete-posts')->...
+Route::middleware('permission:users.view')->...
+Route::middleware('permission:users.view|users.create')->...
 
-// Chỉ định guard tường minh
+// Chỉ định guard tường minh (tham số thứ 2)
 Route::middleware('role:super-admin,admin')->...
-Route::middleware('permission:edit-users,admin')->...
+Route::middleware('permission:users.view,admin')->...
 ```
 
 ---
@@ -158,51 +167,42 @@ Route::middleware('permission:edit-users,admin')->...
 ## Blade Directives
 
 ```blade
-{{-- Kiểm tra role (dùng default guard) --}}
 @role('super-admin')
     Chỉ super-admin thấy
 @endrole
 
-{{-- Kiểm tra role với guard cụ thể --}}
-@role('super-admin', 'admin')
+@role('super-admin', 'admin')       {{-- với guard cụ thể --}}
     ...
 @endrole
 
-{{-- Kiểm tra permission --}}
-@permission('edit-users')
+@permission('users.view')
     ...
 @endpermission
 
-@permission('edit-users', 'admin')
+@permission('users.view', 'admin')
     ...
 @endpermission
 
-{{-- Có ít nhất 1 role (dùng default guard) --}}
-@anyrole('super-admin', 'moderator', 'editor')
+@anyrole('super-admin', 'moderator')            {{-- default guard --}}
     ...
 @endanyrole
 
-{{-- Có ít nhất 1 role với guard cụ thể --}}
-@anyrolefor('admin', 'super-admin', 'moderator')
+@anyrolefor('admin', 'super-admin', 'moderator') {{-- guard tường minh --}}
     ...
 @endanyrolefor
 
-{{-- Có ít nhất 1 permission (dùng default guard) --}}
-@anypermission('edit-users', 'delete-posts', 'view-logs')
+@anypermission('users.view', 'users.create')
     ...
 @endanypermission
 
-{{-- Có ít nhất 1 permission với guard cụ thể --}}
-@anypermissionfor('admin', 'edit-users', 'delete-posts')
+@anypermissionfor('admin', 'users.view', 'users.create')
     ...
 @endanypermissionfor
 ```
 
-> **Lưu ý `@anyrole` vs `@anyrolefor`:** `@anyrole('r1', 'r2')` — tất cả tham số đều là tên role, dùng default guard. `@anyrolefor('guard', 'r1', 'r2')` — tham số đầu là guard, phần còn lại là role names. Tương tự với `@anypermission`/`@anypermissionfor`.
-
 ---
 
-## Artisan Command
+## Artisan — mp:manage
 
 ```bash
 php artisan mp:manage [options] [--guard=web]
@@ -211,66 +211,44 @@ php artisan mp:manage [options] [--guard=web]
 ### Roles
 
 ```bash
-# Tạo roles (nhiều role phân cách bằng dấu phẩy)
 php artisan mp:manage --create-role=super-admin,moderator --guard=admin
-
-# Xóa roles
 php artisan mp:manage --delete-role=moderator --guard=admin
-
-# Liệt kê
 php artisan mp:manage --list-roles --guard=admin
-
-# Xem chi tiết 1 role
-php artisan mp:manage --show-role=super-admin --guard=admin
+php artisan mp:manage --show-role=moderator --guard=admin
 ```
 
 ### Permissions
 
 ```bash
-# Tạo permissions
-php artisan mp:manage --create-permission=manage-users,view-logs,edit-posts --guard=admin
-
-# Xóa permissions
-php artisan mp:manage --delete-permission=edit-posts --guard=admin
-
-# Liệt kê
+php artisan mp:manage --create-permission=users.view,users.create,users.update,users.delete --guard=admin
+php artisan mp:manage --delete-permission=users.delete --guard=admin
 php artisan mp:manage --list-permissions --guard=admin
 ```
 
-### Gán / Gỡ permissions của role
+### Gán / Gỡ
 
 ```bash
-# Thêm permissions vào role — cú pháp: role:perm1,perm2
-php artisan mp:manage --assign-permission=super-admin:manage-users,view-logs --guard=admin
-
-# Gỡ bớt permissions khỏi role (không ảnh hưởng permissions còn lại)
-php artisan mp:manage --revoke-permission=super-admin:view-logs --guard=admin
+# cú pháp: role:perm1,perm2
+php artisan mp:manage --assign-permission=moderator:users.view,users.update --guard=admin
+php artisan mp:manage --revoke-permission=moderator:users.update --guard=admin
 ```
 
 ### Export / Import
 
 ```bash
-# Xuất toàn bộ ra JSON (tự tạo thư mục nếu chưa có)
-php artisan mp:manage --export=storage/permissions.json
-
-# Xuất theo guard cụ thể
-php artisan mp:manage --export=storage/admin-permissions.json --guard=admin
-
-# Nhập từ JSON (tự validate permissions trước khi gán vào role)
+php artisan mp:manage --export=storage/permissions.json --guard=admin
 php artisan mp:manage --import=storage/permissions.json --guard=admin
 ```
 
-Định dạng file JSON:
+Format file JSON:
 
 ```json
 {
     "permissions": [
-        { "name": "manage-users", "guard_name": "admin" },
-        { "name": "view-logs", "guard_name": "admin" }
+        { "name": "users.view", "guard_name": "admin" }
     ],
     "roles": [
-        { "name": "super-admin", "guard_name": "admin", "permissions": ["manage-users", "view-logs"] },
-        { "name": "moderator", "guard_name": "admin", "permissions": ["view-logs"] }
+        { "name": "moderator", "guard_name": "admin", "permissions": ["users.view", "users.update"] }
     ]
 }
 ```
@@ -278,34 +256,20 @@ php artisan mp:manage --import=storage/permissions.json --guard=admin
 ### Sync permissions từ file
 
 ```bash
-# Thay toàn bộ permissions của 1 role bằng nội dung từ file JSON
-# Cú pháp: role:path/to/file.json
-php artisan mp:manage --sync-role-permissions=super-admin:storage/super-admin.json --guard=admin
-```
-
-File JSON chỉ cần có key `permissions`:
-
-```json
-{
-    "permissions": ["manage-users", "view-logs", "edit-posts"]
-}
+# cú pháp: role:path/to/file.json
+php artisan mp:manage --sync-role-permissions=moderator:storage/moderator.json --guard=admin
 ```
 
 ### Reset
 
 ```bash
-# Xóa roles & permissions của guard hiện tại (fire model events → cascade cleanup)
-php artisan mp:manage --reset --guard=admin
-
-# Xóa toàn bộ mọi guard bằng truncate (nhanh, không fire events)
-php artisan mp:manage --reset-all
+php artisan mp:manage --reset --guard=admin    # xóa guard này (fire events → cascade)
+php artisan mp:manage --reset-all               # truncate toàn bộ mọi guard (không fire events)
 ```
 
 ---
 
 ## PermissionService (Dependency Injection)
-
-Inject `PermissionServiceInterface` để dùng trong code:
 
 ```php
 use CuongNX\LaravelMongoPermission\Services\Contracts\PermissionServiceInterface;
@@ -314,83 +278,202 @@ class RoleController extends Controller
 {
     public function __construct(private PermissionServiceInterface $permissions) {}
 
-    public function store(Request $request)
+    public function store()
     {
-        $this->permissions->createRoles('admin,editor', 'web');
-        $this->permissions->assignPermissions('admin', 'edit-posts,delete-posts', 'web');
+        $this->permissions->createRoles('moderator,editor', 'admin');
+        $this->permissions->assignPermissions('moderator', 'users.view,users.update', 'admin');
     }
 }
 ```
 
-| Method | Trả về | Mô tả |
-|---|---|---|
-| `createRoles(string $roles, string $guard)` | `array` | Tạo roles, bỏ qua nếu đã tồn tại |
-| `deleteRoles(string $roles, string $guard)` | `array` | Xóa roles (fire model events → cascade cleanup) |
-| `createPermissions(string $perms, string $guard)` | `array` | Tạo permissions |
-| `deletePermissions(string $perms, string $guard)` | `array` | Xóa permissions (cascade cleanup) |
-| `assignPermissions(string $role, string $perms, string $guard)` | `array` | Gán permissions vào role |
-| `revokePermissions(string $role, string $perms, string $guard)` | `array` | Gỡ bớt permissions khỏi role |
-| `listRoles(string $guard)` | `array` | Danh sách roles |
-| `listPermissions(string $guard)` | `array` | Danh sách permissions |
-| `showRole(string $name, string $guard)` | `array` | Chi tiết 1 role |
-| `exportToFile(string $path, ?string $guard)` | `void` | Xuất JSON |
-| `importFromFile(string $path, string $guard)` | `array` | Nhập JSON |
-| `syncRolePermissions(string $role, string $jsonPath, string $guard)` | `array` | Sync permissions từ file |
-| `reset(?string $guard)` | `void` | Xóa theo guard (fire events) hoặc truncate toàn bộ nếu không truyền guard |
+| Method | Mô tả |
+|---|---|
+| `createRoles(string, string)` | Tạo roles, bỏ qua nếu đã tồn tại |
+| `deleteRoles(string, string)` | Xóa roles (cascade cleanup) |
+| `createPermissions(string, string)` | Tạo permissions |
+| `deletePermissions(string, string)` | Xóa permissions (cascade cleanup) |
+| `assignPermissions(string $role, string $perms, string $guard)` | Gán permissions vào role |
+| `revokePermissions(string $role, string $perms, string $guard)` | Gỡ bớt permissions khỏi role |
+| `listRoles(string)` | Danh sách roles |
+| `listPermissions(string)` | Danh sách permissions |
+| `showRole(string, string)` | Chi tiết 1 role |
+| `exportToFile(string $path, ?string $guard)` | Xuất JSON |
+| `importFromFile(string $path, string $guard)` | Nhập JSON |
+| `syncRolePermissions(string $role, string $jsonPath, string $guard)` | Sync từ file |
+| `reset(?string $guard)` | Xóa guard (events) hoặc truncate toàn bộ |
 
-Kết quả trả về `array` có các key: `created`, `skipped`, `deleted`, `synced`, `failed`.
+Kết quả array có keys: `created`, `skipped`, `deleted`, `assigned`, `revoked`, `synced`, `failed`.
 
 ---
 
 ## Cascade Cleanup
 
-Khi **xóa Role**, thư viện tự động:
-- Xóa `role_ids` tương ứng khỏi tất cả user documents trong `config('mongo-permission.models')`
+Khi **xóa Role**: tự động xóa `role_ids` tương ứng khỏi tất cả user documents trong `config('mongo-permission.models')`.
 
-Khi **xóa Permission**, thư viện tự động:
-- Xóa permission name khỏi `permissions[]` của tất cả Role documents
-- Xóa `permission_ids` tương ứng khỏi tất cả user documents
+Khi **xóa Permission**: tự động xóa permission name khỏi `permissions[]` của tất cả Role documents, và xóa `permission_ids` khỏi user documents.
 
-> `reset($guard)` xóa từng document và fire model events → cascade cleanup chạy bình thường. `reset()` không tham số dùng `truncate()` — nhanh hơn nhưng **không** fire events và xóa **toàn bộ mọi guard**.
+> `reset($guard)` xóa từng document → fire model events → cascade cleanup chạy bình thường.  
+> `reset()` không tham số dùng `truncate()` — nhanh hơn nhưng **không** fire events và xóa **toàn bộ mọi guard**.
 
 ---
 
-## Sử dụng với Filament
+## Shield — Filament Integration
 
-Ví dụ kiểm tra quyền trong Filament Resource:
+> **Yêu cầu:** `filament/filament ^3.0|^4.0|^5.0`
+
+Shield tích hợp thư viện với Filament admin panel, cung cấp:
+- **Auto-generate permissions** từ các Filament Resources đã đăng ký
+- **Form UI** cho RoleResource với permissions nhóm theo resource (tương tự filament-shield)
+- **Artisan `mp:shield:generate`** để tạo/đồng bộ permissions vào MongoDB
+
+### 1. Đăng ký Plugin
 
 ```php
-public static function canAccess(): bool
+// app/Providers/Filament/AdminPanelProvider.php
+use CuongNX\LaravelMongoPermission\Filament\MongoShieldPlugin;
+
+public function panel(Panel $panel): Panel
 {
-    $user = Filament::auth()->user();
-    return $user?->isSuperAdmin() || $user?->hasPermissionTo('manage-admins');
+    return $panel
+        // ...
+        ->plugins([
+            MongoShieldPlugin::make()
+                ->panelId('admin')           // panel ID để scan Resources (mặc định: 'admin')
+                ->superAdminRole('super-admin')  // role bypass mọi check (mặc định: 'super-admin')
+                ->withPagePermissions(),     // sinh thêm permissions cho standalone Pages
+        ]);
 }
 ```
 
-Ví dụ gán role sau khi tạo user:
+#### Tùy chọn plugin
+
+| Method | Mặc định | Mô tả |
+|---|---|---|
+| `->panelId(string)` | `'admin'` | Filament panel ID để quét Resources |
+| `->resourceActions(array)` | `['view','create','update','delete']` | Actions sinh per-resource |
+| `->separator(string)` | `'.'` | Ký tự ngăn cách (e.g. `users.view`) |
+| `->superAdminRole(string)` | `'super-admin'` | Role bypass permission checks |
+| `->withPagePermissions()` | `false` | Sinh thêm permissions cho Pages |
+
+### 2. Sinh Permissions tự động
+
+```bash
+# Quét tất cả Resources trong panel 'admin', guard 'admin'
+php artisan mp:shield:generate --panel=admin --guard=admin
+
+# Kèm Pages
+php artisan mp:shield:generate --panel=admin --guard=admin --pages
+
+# Xem trước, không ghi vào DB
+php artisan mp:shield:generate --dry-run
+
+# Xóa permissions không còn tồn tại trong panel
+php artisan mp:shield:generate --clean
+```
+
+Ví dụ output với 3 resources:
+
+```
+▸ Người dùng
+    users.view → Xem
+    users.create → Tạo
+    users.update → Sửa
+    users.delete → Xóa
+
+▸ Quản trị viên
+    admins.view → Xem
+    admins.create → Tạo
+    admins.update → Sửa
+    admins.delete → Xóa
+
+▸ Quản lý LVcoin
+    lvcoin-adjustments.view → Xem
+    ...
+
+Tổng: 24 permissions từ 6 resources.
+✅ Hoàn tất: 24 tạo mới · 0 đã tồn tại.
+```
+
+### 3. Form UI cho RoleResource
+
+Dùng trait `HasShieldFormComponents` trong `RoleResource`:
 
 ```php
-protected function afterCreate(): void
+use CuongNX\LaravelMongoPermission\Filament\Traits\HasShieldFormComponents;
+
+class RoleResource extends Resource
 {
-    if ($role = $this->data['role'] ?? null) {
-        $this->record->assignRole($role);
+    use HasShieldFormComponents;
+
+    public static function form(Schema $schema): Schema
+    {
+        return $schema->components([
+            TextInput::make('name')
+                ->label('Tên vai trò')
+                ->required(),
+
+            Select::make('guard_name')
+                ->options(['admin' => 'Admin Panel'])
+                ->default('admin'),
+
+            // Renders permission grid: one collapsible Section per resource
+            static::getShieldFormComponents(),
+        ]);
     }
 }
 ```
 
-Ví dụ sync role khi edit user:
+Form sẽ hiển thị các Section có thể thu gọn theo từng resource, mỗi section có checkboxes cho các action (Xem / Tạo / Sửa / Xóa), và một toggle "Chọn tất cả" ở trên cùng.
+
+**Cơ chế hoạt động:**
+- Mỗi resource group dùng `CheckboxList` riêng với tên field synthetic (`__shield_*`)
+- Khi load: `afterStateHydrated` filter `role.permissions` cho từng group
+- Khi thay đổi: `afterStateUpdated` merge tất cả groups vào `Hidden('permissions')`
+- Khi save: Filament lưu `Hidden('permissions')` vào `role.permissions` — không cần override gì thêm
+
+### 4. Phân quyền granular trong Resources
+
+Sau khi có permissions dạng `resource.action`, áp dụng vào từng Resource:
 
 ```php
-protected function afterSave(): void
+class UserResource extends Resource
 {
-    $this->record->role_ids = [];
-    $this->record->save();
+    public static function canAccess(): bool
+    {
+        $user = auth()->guard('admin')->user();
+        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.view');
+    }
 
-    if ($role = $this->data['role'] ?? null) {
-        $this->record->assignRole($role);
+    public static function canCreate(): bool
+    {
+        $user = auth()->guard('admin')->user();
+        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.create');
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        $user = auth()->guard('admin')->user();
+        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.update');
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        $user = auth()->guard('admin')->user();
+        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.delete');
     }
 }
 ```
+
+### 5. Permission naming convention
+
+| Resource | Model | Slug tự động | Permissions sinh ra |
+|---|---|---|---|
+| `UserResource` | `App\Models\User` | `users` | `users.view`, `users.create`, `users.update`, `users.delete` |
+| `AdminResource` | `App\Models\Admin` | `admins` | `admins.view`, ... |
+| `OAuthClientResource` | `App\Models\OAuthClient` | `oauth-clients` | `oauth-clients.view`, ... |
+| `LvcoinAdjustment` *(Page)* | — | — | `page.lvcoin-adjustment` |
+
+Slug được sinh từ: `Str::plural(Str::kebab(class_basename($modelClass)))`.
 
 ---
 

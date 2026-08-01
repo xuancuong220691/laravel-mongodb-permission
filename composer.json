@@ -14,6 +14,9 @@
     "laravel/framework": "^11.0 || ^12.0",
     "mongodb/laravel-mongodb": "^5.4"
   },
+  "suggest": {
+    "filament/filament": "Required for Shield (Filament integration): MongoShieldPlugin, HasShieldFormComponents, mp:shield:generate (^3.0|^4.0|^5.0)"
+  },
   "autoload": {
     "psr-4": {
       "CuongNX\\LaravelMongoPermission\\": "src/"

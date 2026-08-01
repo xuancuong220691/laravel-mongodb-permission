@@ -81,6 +81,7 @@ class MongoPermissionServiceProvider extends ServiceProvider
 
         $this->commands([
             \CuongNX\LaravelMongoPermission\Console\Commands\MongoPermissionManager::class,
+            \CuongNX\LaravelMongoPermission\Console\Commands\MongoShieldGenerate::class,
         ]);
 
         $this->app->bind(
