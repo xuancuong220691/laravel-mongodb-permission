@@ -4,6 +4,7 @@ namespace CuongNX\LaravelMongoPermission\Filament;
 
 use Filament\Contracts\Plugin;
 use Filament\Panel;
+use Illuminate\Support\Facades\Gate;
 
 class MongoShieldPlugin implements Plugin
 {
@@ -38,7 +39,19 @@ class MongoShieldPlugin implements Plugin
 
     public function register(Panel $panel): void {}
 
-    public function boot(Panel $panel): void {}
+    public function boot(Panel $panel): void
+    {
+        $superAdminRole = $this->superAdminRole;
+
+        // Super-admin bypasses every Gate/Policy check automatically.
+        // No permissions need to be assigned to this role.
+        Gate::before(function ($user, string $ability) use ($superAdminRole) {
+            if (method_exists($user, 'hasRole') && $user->hasRole($superAdminRole)) {
+                return true;
+            }
+            return null;
+        });
+    }
 
     // ─── Fluent config ─────────────────────────────────────────────────────────
 

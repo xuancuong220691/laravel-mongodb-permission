@@ -1,0 +1,38 @@
+<?php
+
+namespace App\Policies;
+
+use Illuminate\Foundation\Auth\User as AuthUser;
+
+class {{ModelName}}Policy
+{
+    public function viewAny(AuthUser $user): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.view');
+    }
+
+    public function view(AuthUser $user, mixed $model): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.view');
+    }
+
+    public function create(AuthUser $user): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.create');
+    }
+
+    public function update(AuthUser $user, mixed $model): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.update');
+    }
+
+    public function delete(AuthUser $user, mixed $model): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.delete');
+    }
+
+    public function deleteAny(AuthUser $user): bool
+    {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('{{slug}}.delete');
+    }
+}
