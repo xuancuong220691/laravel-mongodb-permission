@@ -76,14 +76,43 @@ class ResourceDiscovery
     }
 
     /**
-     * All permission keys (resources + optional pages) as a flat unique list.
+     * Returns permission options for Widgets.
+     *
+     * Shape: ['widget.lvcoin-stats-widget' => 'Lvcoin Stats Widget', ...]
+     */
+    public static function getWidgetPermissions(string $panelId, string $separator): array
+    {
+        $widgets = static::getPanelWidgets($panelId);
+        $perms   = [];
+
+        foreach ($widgets as $widgetClass) {
+            if (str_starts_with($widgetClass, 'Filament\\')) {
+                continue;
+            }
+
+            try {
+                $slug  = Str::kebab(class_basename($widgetClass));
+                $label = Str::headline(class_basename($widgetClass));
+
+                $perms['widget' . $separator . $slug] = $label;
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return $perms;
+    }
+
+    /**
+     * All permission keys (resources + optional pages/widgets) as a flat unique list.
      * Used by the mp:shield:generate artisan command.
      */
     public static function getAllPermissionKeys(
         string $panelId,
         array $actions,
         string $separator,
-        bool $includePages = false
+        bool $includePages = false,
+        bool $includeWidgets = false
     ): array {
         $groups = static::getResourceGroups($panelId, $actions, $separator);
 
@@ -91,6 +120,10 @@ class ResourceDiscovery
 
         if ($includePages) {
             $keys = array_merge($keys, array_keys(static::getPagePermissions($panelId, $separator)));
+        }
+
+        if ($includeWidgets) {
+            $keys = array_merge($keys, array_keys(static::getWidgetPermissions($panelId, $separator)));
         }
 
         return array_values(array_unique($keys));
@@ -128,6 +161,19 @@ class ResourceDiscovery
 
         try {
             return \Filament\Facades\Filament::getPanel($panelId)->getPages();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private static function getPanelWidgets(string $panelId): array
+    {
+        if (!class_exists(\Filament\Facades\Filament::class)) {
+            return [];
+        }
+
+        try {
+            return \Filament\Facades\Filament::getPanel($panelId)->getWidgets();
         } catch (\Throwable) {
             return [];
         }

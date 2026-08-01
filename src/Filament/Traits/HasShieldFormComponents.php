@@ -9,6 +9,8 @@ use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Illuminate\Support\Str;
@@ -16,67 +18,74 @@ use Illuminate\Support\Str;
 trait HasShieldFormComponents
 {
     /**
-     * Main entry point — returns the complete permission form block.
+     * Main entry point — returns the complete permission form block with tabs.
      *
      * Usage in RoleResource::form():
      *   static::getShieldFormComponents()
      */
     public static function getShieldFormComponents(): Component
     {
-        $plugin  = MongoShieldPlugin::get();
-        $groups  = ResourceDiscovery::getResourceGroups(
+        $plugin = MongoShieldPlugin::get();
+
+        $resourceGroups = ResourceDiscovery::getResourceGroups(
             $plugin->getPanelId(),
             $plugin->getResourceActions(),
             $plugin->getSeparator(),
         );
 
-        if ($plugin->hasPagePermissions()) {
-            $pagePerms = ResourceDiscovery::getPagePermissions(
-                $plugin->getPanelId(),
-                $plugin->getSeparator(),
-            );
-            if (!empty($pagePerms)) {
-                $groups['Trang (Pages)'] = $pagePerms;
-            }
+        $pagePerms = $plugin->hasPagePermissions()
+            ? ResourceDiscovery::getPagePermissions($plugin->getPanelId(), $plugin->getSeparator())
+            : [];
+
+        $widgetPerms = $plugin->hasWidgetPermissions()
+            ? ResourceDiscovery::getWidgetPermissions($plugin->getPanelId(), $plugin->getSeparator())
+            : [];
+
+        // Build synthetic field names for every group
+        $resourceGroupKeys = static::buildGroupKeys($resourceGroups);
+        $pageFieldName     = '__shield_pages';
+        $widgetFieldName   = '__shield_widgets';
+
+        // All field names combined — used to merge into Hidden('permissions')
+        $allKeys = array_values($resourceGroupKeys);
+        if (!empty($pagePerms))   $allKeys[] = $pageFieldName;
+        if (!empty($widgetPerms)) $allKeys[] = $widgetFieldName;
+
+        // Build tabs
+        $tabs = [static::getResourceTab($resourceGroups, $resourceGroupKeys, $allKeys, $plugin)];
+
+        if (!empty($pagePerms)) {
+            $tabs[] = static::getPageTab($pagePerms, $pageFieldName, $allKeys);
         }
 
-        // Map each group label → unique synthetic field name
-        $groupKeys = static::buildGroupKeys($groups);
-
-        // One Section per resource group
-        $resourceSections = static::buildResourceSections($groups, $groupKeys, $plugin);
+        if (!empty($widgetPerms)) {
+            $tabs[] = static::getWidgetTab($widgetPerms, $widgetFieldName, $allKeys);
+        }
 
         return Section::make('Quyền hạn')
             ->description('Chọn các quyền mà vai trò này được phép thực hiện')
             ->columnSpanFull()
             ->schema([
-                // Master toggle — check / uncheck all at once
-                static::getSelectAllComponent($groups, $groupKeys),
-                // Hidden field — aggregates all group states, this is what Filament saves to the model
+                static::getSelectAllComponent($resourceGroups, $resourceGroupKeys, $pagePerms, $widgetPerms, $pageFieldName, $widgetFieldName),
                 Hidden::make('permissions')->default([]),
-                // Per-resource collapsible sections
-                ...$resourceSections,
+                Tabs::make('shield_tabs')->tabs($tabs)->columnSpanFull(),
             ]);
     }
 
-    // ─── Group sections ────────────────────────────────────────────────────────
+    // ─── Tabs ──────────────────────────────────────────────────────────────────
 
-    /**
-     * Build one collapsible Section per resource group.
-     * Each section contains a CheckboxList for its permission subset.
-     */
-    protected static function buildResourceSections(
+    protected static function getResourceTab(
         array $groups,
         array $groupKeys,
+        array $allKeys,
         MongoShieldPlugin $plugin
-    ): array {
-        $sections   = [];
-        $allKeys    = array_values($groupKeys);
+    ): Tab {
+        $totalPerms = array_sum(array_map('count', $groups));
         $colCount   = count($plugin->getResourceActions());
+        $sections   = [];
 
         foreach ($groups as $groupLabel => $permissions) {
-            $fieldName = $groupKeys[$groupLabel];
-
+            $fieldName  = $groupKeys[$groupLabel];
             $sections[] = Section::make($groupLabel)
                 ->compact()
                 ->collapsible()
@@ -89,7 +98,6 @@ trait HasShieldFormComponents
                         ->bulkToggleable()
                         ->live()
                         ->afterStateHydrated(function (CheckboxList $component, $record) use ($permissions) {
-                            // Pre-check only the permissions belonging to this group
                             $all = $record?->permissions ?? [];
                             $component->state(
                                 array_values(array_intersect($all, array_keys($permissions)))
@@ -98,38 +106,117 @@ trait HasShieldFormComponents
                         ->afterStateUpdated(function (Get $get, Set $set) use ($allKeys) {
                             static::mergeShieldPermissions($get, $set, $allKeys);
                         })
-                        ->dehydrated(false), // Not saved individually — only Hidden('permissions') is
+                        ->dehydrated(false),
                 ]);
         }
 
-        return $sections;
+        return Tab::make('Tài nguyên')
+            ->badge($totalPerms)
+            ->schema($sections);
+    }
+
+    protected static function getPageTab(
+        array $pagePerms,
+        string $fieldName,
+        array $allKeys
+    ): Tab {
+        return Tab::make('Trang')
+            ->badge(count($pagePerms))
+            ->schema([
+                CheckboxList::make($fieldName)
+                    ->hiddenLabel()
+                    ->options($pagePerms)
+                    ->columns(3)
+                    ->gridDirection('row')
+                    ->bulkToggleable()
+                    ->live()
+                    ->afterStateHydrated(function (CheckboxList $component, $record) use ($pagePerms) {
+                        $all = $record?->permissions ?? [];
+                        $component->state(
+                            array_values(array_intersect($all, array_keys($pagePerms)))
+                        );
+                    })
+                    ->afterStateUpdated(function (Get $get, Set $set) use ($allKeys) {
+                        static::mergeShieldPermissions($get, $set, $allKeys);
+                    })
+                    ->dehydrated(false),
+            ]);
+    }
+
+    protected static function getWidgetTab(
+        array $widgetPerms,
+        string $fieldName,
+        array $allKeys
+    ): Tab {
+        return Tab::make('Widget')
+            ->badge(count($widgetPerms))
+            ->schema([
+                CheckboxList::make($fieldName)
+                    ->hiddenLabel()
+                    ->options($widgetPerms)
+                    ->columns(3)
+                    ->gridDirection('row')
+                    ->bulkToggleable()
+                    ->live()
+                    ->afterStateHydrated(function (CheckboxList $component, $record) use ($widgetPerms) {
+                        $all = $record?->permissions ?? [];
+                        $component->state(
+                            array_values(array_intersect($all, array_keys($widgetPerms)))
+                        );
+                    })
+                    ->afterStateUpdated(function (Get $get, Set $set) use ($allKeys) {
+                        static::mergeShieldPermissions($get, $set, $allKeys);
+                    })
+                    ->dehydrated(false),
+            ]);
     }
 
     // ─── Select-all toggle ─────────────────────────────────────────────────────
 
-    protected static function getSelectAllComponent(array $groups, array $groupKeys): Component
-    {
-        $allKeys = array_values($groupKeys);
+    protected static function getSelectAllComponent(
+        array $resourceGroups,
+        array $resourceGroupKeys,
+        array $pagePerms,
+        array $widgetPerms,
+        string $pageFieldName,
+        string $widgetFieldName
+    ): Component {
+        $allKeys = array_values($resourceGroupKeys);
+        if (!empty($pagePerms))   $allKeys[] = $pageFieldName;
+        if (!empty($widgetPerms)) $allKeys[] = $widgetFieldName;
+
+        $allExpectedKeys = array_merge(
+            ...array_map('array_keys', array_values($resourceGroups) ?: [[]]),
+            array_keys($pagePerms),
+            array_keys($widgetPerms),
+        );
 
         return Toggle::make('__shield_select_all')
             ->label('Chọn tất cả quyền')
             ->live()
             ->dehydrated(false)
-            ->afterStateHydrated(function (Toggle $component, $record) use ($groups) {
+            ->afterStateHydrated(function (Toggle $component, $record) use ($allExpectedKeys) {
                 if (!$record) {
                     $component->state(false);
                     return;
                 }
-                $all         = $record->permissions ?? [];
-                $allExpected = array_merge(...array_map('array_keys', array_values($groups) ?: [[]]));
-                $component->state(!empty($allExpected) && empty(array_diff($allExpected, $all)));
+                $all = $record->permissions ?? [];
+                $component->state(!empty($allExpectedKeys) && empty(array_diff($allExpectedKeys, $all)));
             })
-            ->afterStateUpdated(function (bool $state, Set $set) use ($groups, $groupKeys, $allKeys) {
+            ->afterStateUpdated(function (bool $state, Set $set) use ($resourceGroups, $resourceGroupKeys, $pagePerms, $widgetPerms, $pageFieldName, $widgetFieldName, $allKeys) {
                 if ($state) {
                     $merged = [];
-                    foreach ($groups as $label => $permissions) {
-                        $set($groupKeys[$label], array_keys($permissions));
+                    foreach ($resourceGroups as $label => $permissions) {
+                        $set($resourceGroupKeys[$label], array_keys($permissions));
                         $merged = array_merge($merged, array_keys($permissions));
+                    }
+                    if (!empty($pagePerms)) {
+                        $set($pageFieldName, array_keys($pagePerms));
+                        $merged = array_merge($merged, array_keys($pagePerms));
+                    }
+                    if (!empty($widgetPerms)) {
+                        $set($widgetFieldName, array_keys($widgetPerms));
+                        $merged = array_merge($merged, array_keys($widgetPerms));
                     }
                     $set('permissions', array_values(array_unique($merged)));
                 } else {
@@ -143,10 +230,6 @@ trait HasShieldFormComponents
 
     // ─── Aggregate helper ──────────────────────────────────────────────────────
 
-    /**
-     * Collect checked values from all group CheckboxLists and write to Hidden('permissions').
-     * Called from each CheckboxList's afterStateUpdated.
-     */
     protected static function mergeShieldPermissions(Get $get, Set $set, array $fieldNames): void
     {
         $merged = [];
@@ -158,10 +241,6 @@ trait HasShieldFormComponents
 
     // ─── Internal ─────────────────────────────────────────────────────────────
 
-    /**
-     * Build a sanitized field-name map.
-     * 'Người dùng' → '__shield_nguoi_dung', 'OAuth Clients' → '__shield_o_auth_clients'
-     */
     protected static function buildGroupKeys(array $groups): array
     {
         $map = [];

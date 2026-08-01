@@ -22,6 +22,13 @@ Role & Permission system cho Laravel + MongoDB. Hỗ trợ đa guard, không c�
 - [PermissionService (DI)](#permissionservice-dependency-injection)
 - [Cascade Cleanup](#cascade-cleanup)
 - [Shield — Filament Integration](#shield--filament-integration)
+  - [1. Đăng ký Plugin](#1-đăng-ký-plugin)
+  - [2. Sinh Permissions tự động](#2-sinh-permissions-tự-động)
+  - [3. Form UI cho RoleResource](#3-form-ui-cho-roleresource)
+  - [4. Phân quyền cho Resources — Policy + Gate](#4-phân-quyền-cho-resources--policy--gatebefore)
+  - [5. Phân quyền cho Pages — HasPageShield](#5-phân-quyền-cho-pages--haspageshield)
+  - [6. Phân quyền cho Widgets — HasWidgetShield](#6-phân-quyền-cho-widgets--haswidgetshield)
+  - [7. Permission naming convention](#7-permission-naming-convention)
 - [License](#license)
 
 ---
@@ -321,10 +328,14 @@ Khi **xóa Permission**: tự động xóa permission name khỏi `permissions[]
 
 > **Yêu cầu:** `filament/filament ^3.0|^4.0|^5.0`
 
-Shield tích hợp thư viện với Filament admin panel, cung cấp:
-- **Auto-generate permissions** từ các Filament Resources đã đăng ký
-- **Form UI** cho RoleResource với permissions nhóm theo resource (tương tự filament-shield)
-- **Artisan `mp:shield:generate`** để tạo/đồng bộ permissions vào MongoDB
+Shield tích hợp thư viện với Filament admin panel, tương tự `bezhansalleh/filament-shield` nhưng dành cho MongoDB:
+
+- **Auto-generate permissions** từ Resources, Pages, Widgets đăng ký trong panel
+- **Form UI dạng Tabs** cho RoleResource (Tài nguyên / Trang / Widget)
+- **`HasPageShield` / `HasWidgetShield` traits** — Page và Widget tự kiểm tra quyền qua Gate
+- **`Gate::before()` cho super-admin** — bypass toàn bộ checks, không cần gán permission
+- **Policy generator** — tự sinh Laravel Policy files từ stub
+- **Artisan `mp:shield:generate`** — đồng bộ permissions vào MongoDB
 
 ### 1. Đăng ký Plugin
 
@@ -335,12 +346,12 @@ use CuongNX\LaravelMongoPermission\Filament\MongoShieldPlugin;
 public function panel(Panel $panel): Panel
 {
     return $panel
-        // ...
         ->plugins([
             MongoShieldPlugin::make()
-                ->panelId('admin')           // panel ID để scan Resources (mặc định: 'admin')
-                ->superAdminRole('super-admin')  // role bypass mọi check (mặc định: 'super-admin')
-                ->withPagePermissions(),     // sinh thêm permissions cho standalone Pages
+                ->panelId('admin')
+                ->superAdminRole('super-admin')
+                ->withPagePermissions()
+                ->withWidgetPermissions(),
         ]);
 }
 ```
@@ -352,26 +363,26 @@ public function panel(Panel $panel): Panel
 | `->panelId(string)` | `'admin'` | Filament panel ID để quét Resources |
 | `->resourceActions(array)` | `['view','create','update','delete']` | Actions sinh per-resource |
 | `->separator(string)` | `'.'` | Ký tự ngăn cách (e.g. `users.view`) |
-| `->superAdminRole(string)` | `'super-admin'` | Role bypass permission checks |
-| `->withPagePermissions()` | `false` | Sinh thêm permissions cho Pages |
+| `->superAdminRole(string)` | `'super-admin'` | Role bypass tất cả permission checks qua `Gate::before()` |
+| `->withPagePermissions()` | `false` | Sinh thêm permissions cho standalone Pages |
+| `->withWidgetPermissions()` | `false` | Sinh thêm permissions cho Widgets |
 
 ### 2. Sinh Permissions tự động
 
 ```bash
-# Quét tất cả Resources trong panel 'admin', guard 'admin'
-php artisan mp:shield:generate --panel=admin --guard=admin
+# Resources + Pages + Widgets, xóa stale, sinh Policy files
+php artisan mp:shield:generate \
+    --panel=admin --guard=admin \
+    --pages --widgets --policies --clean
 
-# Kèm Pages
-php artisan mp:shield:generate --panel=admin --guard=admin --pages
-
-# Xem trước, không ghi vào DB
+# Xem trước, không ghi
 php artisan mp:shield:generate --dry-run
 
-# Xóa permissions không còn tồn tại trong panel
-php artisan mp:shield:generate --clean
+# Chỉ Resources
+php artisan mp:shield:generate --panel=admin --guard=admin
 ```
 
-Ví dụ output với 3 resources:
+Ví dụ output:
 
 ```
 ▸ Người dùng
@@ -379,19 +390,13 @@ Ví dụ output với 3 resources:
     users.create → Tạo
     users.update → Sửa
     users.delete → Xóa
+▸ Pages
+    page.lvcoin-adjustment → Điều chỉnh LVcoin
+▸ Widgets
+    widget.stats-overview → Stats Overview
 
-▸ Quản trị viên
-    admins.view → Xem
-    admins.create → Tạo
-    admins.update → Sửa
-    admins.delete → Xóa
-
-▸ Quản lý LVcoin
-    lvcoin-adjustments.view → Xem
-    ...
-
-Tổng: 24 permissions từ 6 resources.
-✅ Hoàn tất: 24 tạo mới · 0 đã tồn tại.
+Tổng: 42 permissions từ 10 resources + 1 pages + 1 widgets.
+✅ Permissions: 42 tạo mới · 0 đã tồn tại | Policies: 10 tạo mới · 0 bỏ qua.
 ```
 
 ### 3. Form UI cho RoleResource
@@ -408,72 +413,106 @@ class RoleResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            TextInput::make('name')
-                ->label('Tên vai trò')
-                ->required(),
-
+            TextInput::make('name')->label('Tên vai trò')->required(),
             Select::make('guard_name')
                 ->options(['admin' => 'Admin Panel'])
                 ->default('admin'),
-
-            // Renders permission grid: one collapsible Section per resource
             static::getShieldFormComponents(),
         ]);
     }
 }
 ```
 
-Form sẽ hiển thị các Section có thể thu gọn theo từng resource, mỗi section có checkboxes cho các action (Xem / Tạo / Sửa / Xóa), và một toggle "Chọn tất cả" ở trên cùng.
+Form hiển thị dạng **Tabs**:
+- **Tài nguyên** — collapsible Section per resource, checkboxes Xem/Tạo/Sửa/Xóa, badge = tổng permissions
+- **Trang** — CheckboxList phẳng tất cả Pages, badge = số Pages
+- **Widget** — CheckboxList phẳng tất cả Widgets, badge = số Widgets
+- Toggle **"Chọn tất cả"** ở trên đầu — check/uncheck toàn bộ 3 tab cùng lúc
 
 **Cơ chế hoạt động:**
-- Mỗi resource group dùng `CheckboxList` riêng với tên field synthetic (`__shield_*`)
-- Khi load: `afterStateHydrated` filter `role.permissions` cho từng group
-- Khi thay đổi: `afterStateUpdated` merge tất cả groups vào `Hidden('permissions')`
-- Khi save: Filament lưu `Hidden('permissions')` vào `role.permissions` — không cần override gì thêm
+- Mỗi group/tab dùng `CheckboxList` synthetic (`__shield_*`) với `dehydrated(false)`
+- `afterStateHydrated` — filter `role.permissions` cho từng group khi load
+- `afterStateUpdated` — merge tất cả groups vào `Hidden('permissions')`
+- Filament lưu `Hidden('permissions')` vào `role.permissions` — không cần override gì thêm
 
-### 4. Phân quyền granular trong Resources
+### 4. Phân quyền cho Resources — Policy + Gate::before
 
-Sau khi có permissions dạng `resource.action`, áp dụng vào từng Resource:
+Cách khuyến nghị: dùng **Policy + `Gate::before()`** thay vì `canAccess()` thủ công.
+
+**Bước 1:** Chạy `--policies` để sinh Policy files:
+
+```bash
+php artisan mp:shield:generate --policies
+```
+
+Policy được sinh tự động vào `app/Policies/UserPolicy.php`:
 
 ```php
-class UserResource extends Resource
+class UserPolicy
 {
-    public static function canAccess(): bool
-    {
-        $user = auth()->guard('admin')->user();
-        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.view');
+    public function viewAny(AuthUser $user): bool {
+        return method_exists($user, 'hasPermissionTo') && $user->hasPermissionTo('users.view');
     }
-
-    public static function canCreate(): bool
-    {
-        $user = auth()->guard('admin')->user();
-        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.create');
-    }
-
-    public static function canEdit(Model $record): bool
-    {
-        $user = auth()->guard('admin')->user();
-        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.update');
-    }
-
-    public static function canDelete(Model $record): bool
-    {
-        $user = auth()->guard('admin')->user();
-        return $user?->isSuperAdmin() || $user?->hasPermissionTo('users.delete');
-    }
+    public function view(AuthUser $user, User $model): bool { ... }
+    public function create(AuthUser $user): bool { ... }
+    public function update(AuthUser $user, User $model): bool { ... }
+    public function delete(AuthUser $user, User $model): bool { ... }
 }
 ```
 
-### 5. Permission naming convention
+**Bước 2:** Xóa `canAccess()` khỏi Resource — Filament tự gọi `Gate::allows('viewAny', $model)` → Policy:
 
-| Resource | Model | Slug tự động | Permissions sinh ra |
-|---|---|---|---|
-| `UserResource` | `App\Models\User` | `users` | `users.view`, `users.create`, `users.update`, `users.delete` |
-| `AdminResource` | `App\Models\Admin` | `admins` | `admins.view`, ... |
-| `OAuthClientResource` | `App\Models\OAuthClient` | `oauth-clients` | `oauth-clients.view`, ... |
-| `LvcoinAdjustment` *(Page)* | — | — | `page.lvcoin-adjustment` |
+```php
+// Không cần canAccess() — Policy xử lý tự động
+class UserResource extends Resource
+{
+    protected static ?string $model = User::class;
+    // ...
+}
+```
 
-Slug được sinh từ: `Str::plural(Str::kebab(class_basename($modelClass)))`.
+**Super-admin bypass:** `MongoShieldPlugin` đăng ký `Gate::before()` khi boot — super-admin tự động pass mọi check mà không cần gán permission.
+
+### 5. Phân quyền cho Pages — `HasPageShield`
+
+Thay vì viết `canAccess()` thủ công, dùng trait:
+
+```php
+use CuongNX\LaravelMongoPermission\Filament\Traits\HasPageShield;
+
+class LvcoinAdjustment extends Page
+{
+    use HasPageShield;
+    // canAccess() tự động: Gate::allows('page.lvcoin-adjustment')
+    // Super-admin bypass qua Gate::before()
+}
+```
+
+Trait tự động derive permission name từ class name: `LvcoinAdjustment` → `page.lvcoin-adjustment`.
+
+### 6. Phân quyền cho Widgets — `HasWidgetShield`
+
+```php
+use CuongNX\LaravelMongoPermission\Filament\Traits\HasWidgetShield;
+
+class StatsOverviewWidget extends Widget
+{
+    use HasWidgetShield;
+    // canView() tự động: Gate::allows('widget.stats-overview-widget')
+}
+```
+
+### 7. Permission naming convention
+
+| Loại | Class | Permission |
+|---|---|---|
+| Resource | `App\Models\User` | `users.view`, `users.create`, `users.update`, `users.delete` |
+| Resource | `App\Models\OAuthClient` | `oauth-clients.view`, ... |
+| Page | `LvcoinAdjustment` | `page.lvcoin-adjustment` |
+| Widget | `StatsOverviewWidget` | `widget.stats-overview-widget` |
+
+- Resource slug: `Str::plural(Str::kebab(class_basename($modelClass)))`
+- Page/Widget slug: `Str::kebab(class_basename($class))`
 
 ---
 

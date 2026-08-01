@@ -18,6 +18,8 @@ class MongoShieldPlugin implements Plugin
 
     private bool $includePagePermissions = false;
 
+    private bool $includeWidgetPermissions = false;
+
     // ─── Factory ───────────────────────────────────────────────────────────────
 
     public static function make(): static
@@ -90,6 +92,13 @@ class MongoShieldPlugin implements Plugin
         return $this;
     }
 
+    /** Also generate/display permissions for Filament Widgets. */
+    public function withWidgetPermissions(bool $enabled = true): static
+    {
+        $this->includeWidgetPermissions = $enabled;
+        return $this;
+    }
+
     // ─── Getters ───────────────────────────────────────────────────────────────
 
     public function getPanelId(): string { return $this->panelId; }
@@ -101,4 +110,6 @@ class MongoShieldPlugin implements Plugin
     public function getSuperAdminRole(): string { return $this->superAdminRole; }
 
     public function hasPagePermissions(): bool { return $this->includePagePermissions; }
+
+    public function hasWidgetPermissions(): bool { return $this->includeWidgetPermissions; }
 }

@@ -16,6 +16,7 @@ class MongoShieldGenerate extends Command
         {--separator=.      : Ký tự ngăn cách giữa resource slug và action (mặc định: dấu chấm)}
         {--actions=view,create,update,delete : Danh sách actions, phân cách bằng dấu phẩy}
         {--pages            : Cũng sinh permissions cho standalone Pages}
+        {--widgets          : Cũng sinh permissions cho Filament Widgets}
         {--policies         : Sinh Policy files vào app/Policies/ (cho phép bỏ canAccess thủ công)}
         {--dry-run          : Chỉ hiển thị danh sách, không tạo vào DB hay file system}
         {--clean            : Xóa permissions trong DB không còn tồn tại trong panel nữa}
@@ -30,6 +31,7 @@ class MongoShieldGenerate extends Command
         $separator    = $this->option('separator');
         $actions      = array_values(array_filter(array_map('trim', explode(',', $this->option('actions')))));
         $withPages    = (bool) $this->option('pages');
+        $withWidgets  = (bool) $this->option('widgets');
         $withPolicies = (bool) $this->option('policies');
         $dryRun       = (bool) $this->option('dry-run');
         $clean        = (bool) $this->option('clean');
@@ -53,6 +55,10 @@ class MongoShieldGenerate extends Command
             ? ResourceDiscovery::getPagePermissions($panelId, $separator)
             : [];
 
+        $widgetPerms = $withWidgets
+            ? ResourceDiscovery::getWidgetPermissions($panelId, $separator)
+            : [];
+
         // ── Hiển thị danh sách discover ───────────────────────────────────────
         $this->newLine();
         foreach ($groups as $groupLabel => $permissions) {
@@ -69,12 +75,20 @@ class MongoShieldGenerate extends Command
             }
         }
 
-        $allKeys = ResourceDiscovery::getAllPermissionKeys($panelId, $actions, $separator, $withPages);
+        if (!empty($widgetPerms)) {
+            $this->line('<fg=yellow>▸ Widgets</>');
+            foreach ($widgetPerms as $key => $label) {
+                $this->line("    <fg=gray>{$key}</> → {$label}");
+            }
+        }
+
+        $allKeys = ResourceDiscovery::getAllPermissionKeys($panelId, $actions, $separator, $withPages, $withWidgets);
 
         $this->newLine();
         $this->line(
             'Tổng: <fg=cyan>' . count($allKeys) . '</> permissions từ <fg=cyan>' . count($groups) . '</> resources'
             . ($withPages && !empty($pagePerms) ? ' + ' . count($pagePerms) . ' pages' : '')
+            . ($withWidgets && !empty($widgetPerms) ? ' + ' . count($widgetPerms) . ' widgets' : '')
             . '.'
         );
 
