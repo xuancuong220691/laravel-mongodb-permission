@@ -185,11 +185,10 @@ trait HasShieldFormComponents
         if (!empty($pagePerms))   $allKeys[] = $pageFieldName;
         if (!empty($widgetPerms)) $allKeys[] = $widgetFieldName;
 
-        $allExpectedKeys = array_merge(
-            ...array_map('array_keys', array_values($resourceGroups) ?: [[]]),
-            array_keys($pagePerms),
-            array_keys($widgetPerms),
-        );
+        $chunks = array_map('array_keys', array_values($resourceGroups) ?: [[]]);
+        $chunks[] = array_keys($pagePerms);
+        $chunks[] = array_keys($widgetPerms);
+        $allExpectedKeys = array_merge(...$chunks);
 
         return Toggle::make('__shield_select_all')
             ->label('Chọn tất cả quyền')
